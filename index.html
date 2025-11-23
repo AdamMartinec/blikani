@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
   <meta charset="UTF-8">
-  <title>Hokejová bitva – Blikání týmů (sync)</title>
+  <title>Hokejová bitva – Blikání týmů (sync, 3s interval)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -122,7 +122,7 @@
     btnTgm.addEventListener('click', startTgm);
     btnStop.addEventListener('click', stopFlash);
 
-    // 1) sync s centrálním časem (UTC) přes veřejné API
+    // 1) sync s centrálním časem (UTC)
     async function syncWithServerTime() {
       try {
         const t0 = Date.now();
@@ -132,35 +132,35 @@
         const data = await res.json();
         const serverMs = Date.parse(data.utc_datetime);
 
-        const latency = (t1 - t0) / 2;          // odhad zpoždění
-        timeOffset = serverMs + latency - t1;   // kolik je server napřed/pozadu
+        const latency = (t1 - t0) / 2;
+        timeOffset = serverMs + latency - t1;
 
         startTicker();
       } catch (e) {
-        console.error('Nepovedlo se syncnout čas, jedu podle lokálního:', e);
+        console.error('Nepovedlo se syncnout čas:', e);
         timeOffset = 0;
-        startTicker(); // fallback, když API zdechne
+        startTicker();
       }
     }
 
-    // 2) navázání na začátek sekundy podle "centrálního" času
+    // 2) navázání na začátek 3sekundového intervalu
     function startTicker() {
       const now = Date.now() + timeOffset;
-      const msToNextSecond = 1000 - (now % 1000);
+      const msToNextInterval = 3000 - (now % 3000);
 
       setTimeout(() => {
-        runSecondTick();
-        setInterval(runSecondTick, 1000);
-      }, msToNextSecond);
+        runTick();
+        setInterval(runTick, 3000);
+      }, msToNextInterval);
     }
 
-    // 3) každou sekundu přepneme barvu podle serverového času
-    function runSecondTick() {
+    // 3) každé 3 sekundy přepneme barvu
+    function runTick() {
       if (!activeMode) return;
 
       const now = Date.now() + timeOffset;
-      const sec = Math.floor(now / 1000);
-      const even = sec % 2 === 0;
+      const index = Math.floor(now / 3000);
+      const even = index % 2 === 0;
 
       if (activeMode === 'lesnak') {
         overlay.style.backgroundColor = even ? '#12b112' : '#ff7a00';
@@ -169,7 +169,6 @@
       }
     }
 
-    // start
     syncWithServerTime();
   </script>
 </body>
