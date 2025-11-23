@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
   <meta charset="UTF-8">
-  <title>Hokejová bitva – Blikání týmů</title>
+  <title>Hokejová bitva – Blikání týmů (sync)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -15,25 +15,69 @@
       justify-content: center;
     }
     .container { text-align: center; z-index: 1; }
-    h1 { margin-bottom: 1.5rem; letter-spacing: 0.06em; text-transform: uppercase; font-size: 1.4rem; opacity: 0.8; }
-    .buttons { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    h1 {
+      margin-bottom: 1.5rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 1.4rem;
+      opacity: 0.8;
+    }
+    .buttons {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
     button {
-      padding: 1rem 2rem; border-radius: 999px; border: none;
-      font-size: 1.1rem; font-weight: 700; cursor: pointer;
-      text-transform: uppercase; letter-spacing: 0.08em;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+      padding: 1rem 2rem;
+      border-radius: 999px;
+      border: none;
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        opacity 0.15s ease;
       box-shadow: 0 0 25px rgba(0,0,0,0.4);
     }
-    button:hover { transform: translateY(-2px) scale(1.03); box-shadow: 0 0 35px rgba(0,0,0,0.6); opacity: 0.9; }
-    button:active { transform: translateY(0) scale(0.97); box-shadow: 0 0 15px rgba(0,0,0,0.4); opacity: 0.8; }
-    .btn-lesnak { background: linear-gradient(135deg, #14b814, #ff7a00); color: #05060a; }
-    .btn-tgm { background: linear-gradient(135deg, #ffd500, #005bbb); color: #05060a; }
-    .btn-stop { background: #111827; color: #e5e7eb; border: 1px solid #4b5563; }
-    .flash-overlay {
-      position: fixed; inset: 0; pointer-events: none;
-      opacity: 0; transition: opacity 0.2s ease; z-index: 0;
+    button:hover {
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 0 35px rgba(0,0,0,0.6);
+      opacity: 0.9;
     }
-    .flash-overlay.active { opacity: 1; pointer-events: auto; }
+    button:active {
+      transform: translateY(0) scale(0.97);
+      box-shadow: 0 0 15px rgba(0,0,0,0.4);
+      opacity: 0.8;
+    }
+    .btn-lesnak {
+      background: linear-gradient(135deg, #14b814, #ff7a00);
+      color: #05060a;
+    }
+    .btn-tgm {
+      background: linear-gradient(135deg, #ffd500, #005bbb);
+      color: #05060a;
+    }
+    .btn-stop {
+      background: #111827;
+      color: #e5e7eb;
+      border: 1px solid #4b5563;
+    }
+    .flash-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      z-index: 0;
+    }
+    .flash-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
   </style>
 </head>
 <body>
@@ -48,12 +92,15 @@
   </div>
 
   <script>
+    'use strict';
+
     const overlay = document.getElementById('flashOverlay');
     const btnLesnak = document.getElementById('btnLesnak');
     const btnTgm = document.getElementById('btnTgm');
     const btnStop = document.getElementById('btnStop');
 
     let activeMode = null;
+    let timeOffset = 0; // rozdíl mezi serverovým a lokálním časem v ms
 
     function startLesnak() {
       activeMode = 'lesnak';
@@ -71,35 +118,59 @@
       overlay.style.backgroundColor = 'transparent';
     }
 
-    function syncToSecond() {
-      const now = new Date();
-      const msToNextSecond = 1000 - now.getMilliseconds();
+    btnLesnak.addEventListener('click', startLesnak);
+    btnTgm.addEventListener('click', startTgm);
+    btnStop.addEventListener('click', stopFlash);
+
+    // 1) sync s centrálním časem (UTC) přes veřejné API
+    async function syncWithServerTime() {
+      try {
+        const t0 = Date.now();
+        const res = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
+        const t1 = Date.now();
+
+        const data = await res.json();
+        const serverMs = Date.parse(data.utc_datetime);
+
+        const latency = (t1 - t0) / 2;          // odhad zpoždění
+        timeOffset = serverMs + latency - t1;   // kolik je server napřed/pozadu
+
+        startTicker();
+      } catch (e) {
+        console.error('Nepovedlo se syncnout čas, jedu podle lokálního:', e);
+        timeOffset = 0;
+        startTicker(); // fallback, když API zdechne
+      }
+    }
+
+    // 2) navázání na začátek sekundy podle "centrálního" času
+    function startTicker() {
+      const now = Date.now() + timeOffset;
+      const msToNextSecond = 1000 - (now % 1000);
+
       setTimeout(() => {
         runSecondTick();
         setInterval(runSecondTick, 1000);
       }, msToNextSecond);
     }
 
+    // 3) každou sekundu přepneme barvu podle serverového času
     function runSecondTick() {
       if (!activeMode) return;
 
-      const sec = new Date().getSeconds();
+      const now = Date.now() + timeOffset;
+      const sec = Math.floor(now / 1000);
       const even = sec % 2 === 0;
 
       if (activeMode === 'lesnak') {
         overlay.style.backgroundColor = even ? '#12b112' : '#ff7a00';
-      }
-
-      if (activeMode === 'tgm') {
+      } else if (activeMode === 'tgm') {
         overlay.style.backgroundColor = even ? '#ffd500' : '#005bbb';
       }
     }
 
-    btnLesnak.addEventListener('click', startLesnak);
-    btnTgm.addEventListener('click', startTgm);
-    btnStop.addEventListener('click', stopFlash);
-
-    syncToSecond();
+    // start
+    syncWithServerTime();
   </script>
 </body>
 </html>
