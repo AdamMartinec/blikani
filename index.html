@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
   <meta charset="UTF-8">
-  <title>Hokejová bitva – Blikání týmů (max sync)</title>
+  <title>Hokejová bitva – Blikání týmů (sync)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -78,12 +78,6 @@
       opacity: 1;
       pointer-events: auto;
     }
-
-    .status {
-      margin-top: 1rem;
-      font-size: 0.8rem;
-      opacity: 0.6;
-    }
   </style>
 </head>
 <body>
@@ -95,7 +89,6 @@
       <button class="btn-tgm" id="btnTgm">TGM</button>
       <button class="btn-stop" id="btnStop">Stop</button>
     </div>
-    <div class="status" id="status">Synchronizuji čas…</div>
   </div>
 
   <script>
@@ -105,130 +98,69 @@
     const btnLesnak = document.getElementById('btnLesnak');
     const btnTgm = document.getElementById('btnTgm');
     const btnStop = document.getElementById('btnStop');
-    const statusEl = document.getElementById('status');
 
     let activeMode = null;
-    let timeOffset = 0;     // ms: serverTime - localTime
-    let syncInProgress = false;
+    let timeOffset = 0; // rozdíl mezi serverovým a lokálním časem v ms
 
-    btnLesnak.addEventListener('click', () => {
+    function startLesnak() {
       activeMode = 'lesnak';
       overlay.classList.add('active');
-    });
+    }
 
-    btnTgm.addEventListener('click', () => {
+    function startTgm() {
       activeMode = 'tgm';
       overlay.classList.add('active');
-    });
+    }
 
-    btnStop.addEventListener('click', () => {
+    function stopFlash() {
       activeMode = null;
       overlay.classList.remove('active');
       overlay.style.backgroundColor = 'transparent';
-    });
+    }
 
-    /**
-     * Získá jeden vzorek času ze serveru.
-     * Vrací objekt { serverMs, latency } nebo null při chybě.
-     */
-    async function sampleServerTime() {
-      const url = 'https://worldtimeapi.org/api/timezone/Etc/UTC';
+    btnLesnak.addEventListener('click', startLesnak);
+    btnTgm.addEventListener('click', startTgm);
+    btnStop.addEventListener('click', stopFlash);
 
+    // 1) sync s centrálním časem (UTC) přes veřejné API
+    async function syncWithServerTime() {
       try {
         const t0 = Date.now();
-        const res = await fetch(url, { cache: 'no-store' });
+        const res = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
         const t1 = Date.now();
 
         const data = await res.json();
         const serverMs = Date.parse(data.utc_datetime);
-        const latency = (t1 - t0) / 2;
 
-        return { serverMs, latency };
-      } catch (err) {
-        console.error('Chyba při načítání času:', err);
-        return null;
+        const latency = (t1 - t0) / 2;          // odhad zpoždění
+        timeOffset = serverMs + latency - t1;   // kolik je server napřed/pozadu
+
+        startTicker();
+      } catch (e) {
+        console.error('Nepovedlo se syncnout čas, jedu podle lokálního:', e);
+        timeOffset = 0;
+        startTicker(); // fallback, když API zdechne
       }
     }
 
-    /**
-     * Udělá několik měření a vybere to s nejmenší latencí.
-     */
-    async function calibrateTimeOffset(samplesCount = 5) {
-      syncInProgress = true;
-      statusEl.textContent = 'Synchronizuji čas…';
-
-      const results = [];
-
-      for (let i = 0; i < samplesCount; i++) {
-        const sample = await sampleServerTime();
-        if (sample) {
-          results.push(sample);
-        }
-      }
-
-      if (results.length === 0) {
-        // nic se nepovedlo, jedeme lokálně
-        statusEl.textContent = 'Sync selhal, jedu podle lokálního času.';
-        syncInProgress = false;
-        return;
-      }
-
-      // vybereme vzorek s nejmenší latencí (nejpřesnější odhad)
-      results.sort((a, b) => a.latency - b.latency);
-      const best = results[0];
-
-      const localNow = Date.now();
-      const newOffset = best.serverMs - localNow;
-
-      // pokud už máme nějaký offset, lehce k němu dorovnáme (aby nebyl skok)
-      if (Math.abs(timeOffset) < 86400000 && timeOffset !== 0) {
-        // 80 % původního, 20 % nového – jemná korekce
-        timeOffset = timeOffset * 0.8 + newOffset * 0.2;
-      } else {
-        timeOffset = newOffset;
-      }
-
-      statusEl.textContent =
-        'Sync hotový. Odhad offsetu: ' +
-        Math.round(timeOffset) +
-        ' ms (nejlepší ping: ' +
-        Math.round(best.latency) +
-        ' ms).';
-
-      syncInProgress = false;
-    }
-
-    /**
-     * Vrací "centrální" čas v ms (server time) = local + offset.
-     */
-    function nowCentralMs() {
-      return Date.now() + timeOffset;
-    }
-
-    /**
-     * Naplánuje další přepnutí barvy přesně na začátek další sekundy
-     * podle centrálního času.
-     */
-    function scheduleNextTick() {
-      const now = nowCentralMs();
+    // 2) navázání na začátek sekundy podle "centrálního" času
+    function startTicker() {
+      const now = Date.now() + timeOffset;
       const msToNextSecond = 1000 - (now % 1000);
 
       setTimeout(() => {
         runSecondTick();
-        scheduleNextTick();
+        setInterval(runSecondTick, 1000);
       }, msToNextSecond);
     }
 
-    /**
-     * Provádí samotné přepnutí barvy podle aktuální vteřiny
-     * centrálního času.
-     */
+    // 3) každou sekundu přepneme barvu podle serverového času
     function runSecondTick() {
       if (!activeMode) return;
 
-      const now = nowCentralMs();
+      const now = Date.now() + timeOffset;
       const sec = Math.floor(now / 1000);
-      const even = (sec % 2) === 0;
+      const even = sec % 2 === 0;
 
       if (activeMode === 'lesnak') {
         overlay.style.backgroundColor = even ? '#12b112' : '#ff7a00';
@@ -237,30 +169,8 @@
       }
     }
 
-    /**
-     * Průběžný resync – každých X sekund se zkusíme lehce dorovnat.
-     */
-    function startPeriodicResync(intervalSeconds = 6) {
-      setInterval(() => {
-        if (!syncInProgress) {
-          calibrateTimeOffset(3);
-        }
-      }, intervalSeconds * 1000);
-    }
-
-    /**
-     * Start celé logiky:
-     * 1) první kalibrace času
-     * 2) rozběhnutí tickeru
-     * 3) periodický resync
-     */
-    async function start() {
-      await calibrateTimeOffset(5);
-      scheduleNextTick();
-      startPeriodicResync(6);
-    }
-
-    start();
+    // start
+    syncWithServerTime();
   </script>
 </body>
 </html>
